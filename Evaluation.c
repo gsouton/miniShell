@@ -17,11 +17,10 @@
 int execute_simple_command(char *command, char **args){
 	int pid  = fork();
 	if(!pid){
-		int e = execvp(command, args);
-		return e; // in case of invalid command zombie will be created
+		execvp(command, args);
 	}else{
 		int wstatus;
-		int w = waitpid(pid, &wstatus, 0 );
+		wait(&wstatus);
 		return wstatus;
 	}
 }
@@ -39,9 +38,9 @@ int evaluer_expr(Expression *e)
 	}
 
 	else if(e->type == SEQUENCE){
-		evaluer_expr(e->gauche);
-		evaluer_expr(e->droite);
-		return 0;
+		int ret = evaluer_expr(e->gauche);
+		ret = evaluer_expr(e->droite);
+		return ret;
 	}
 	
 	else if(e->type == SEQUENCE_ET){
@@ -57,6 +56,7 @@ int evaluer_expr(Expression *e)
 	else if(e->type == SEQUENCE_OU){
 		int ret = 0;
 		if((ret = evaluer_expr(e->gauche) == 0)){
+			//fprintf(stderr, "ret = %d", ret);
 			return ret;
 		}
 		else if( (ret = evaluer_expr(e->droite)) == 0){
