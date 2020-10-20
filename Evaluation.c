@@ -18,6 +18,7 @@ int execute_simple_command(char *command, char **args){
 	int pid  = fork();
 	if(!pid){
 		execvp(command, args);
+		exit(EXIT_FAILURE);
 	}else{
 		int wstatus;
 		wait(&wstatus);
