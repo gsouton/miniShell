@@ -18,7 +18,7 @@ int execute_simple_command(char *command, char **args){
 	int pid  = fork();
 	if(!pid){
 		execvp(command, args);
-		exit(EXIT_FAILURE);
+		exit(EXIT_FAILURE); // if execvp fails it return -1 we could also return the return of execvp but this line would execute only if execvp cannot execute
 	}else{
 		int wstatus;
 		wait(&wstatus);
@@ -56,7 +56,7 @@ int evaluer_expr(Expression *e)
 
 	else if(e->type == SEQUENCE_OU){
 		int ret = 0;
-		if((ret = evaluer_expr(e->gauche) == 0)){
+		if((ret = evaluer_expr(e->gauche) ) == 0){
 			//fprintf(stderr, "ret = %d", ret);
 			return ret;
 		}
@@ -64,10 +64,10 @@ int evaluer_expr(Expression *e)
 			return ret;
 		}
 		return ret;
-	}
-
-
+	}else{
 
 	fprintf(stderr, "not yet implemented \n");
 	return 1;
+	}
+
 }
