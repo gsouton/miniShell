@@ -20,7 +20,7 @@ void kill_zombies(){
 	int wstatus;
 	int w = waitpid(-1, &wstatus, WNOHANG);
 	if(w > 0){
-		wait(NULL);
+		waitpid(w, &wstatus, 0);
 		fprintf(stderr, "%d, Fini\n", w);
 	}
 
