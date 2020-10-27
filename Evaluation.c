@@ -38,7 +38,7 @@ void kill_zombies(){
 	}
 }
 
-void manage_input(opt_t options, int fd){
+void manage_redirection(opt_t options, int fd){
 	if(options == 0){
 		return;
 	}
@@ -70,7 +70,7 @@ int execute_command(char *command, char **args, bool background, opt_t options, 
 	int pid  = fork();
 
 	if(!pid){
-		manage_input(options, fd);
+		manage_redirection(options, fd);
 		execvp(command, args);
 		exit(EXIT_FAILURE); // if execvp fails it return -1 we could also return the return of execvp but this line would execute only if execvp cannot execute
 	}else{
@@ -92,26 +92,59 @@ int evaluer_expr_background(Expression *e){
 		int ret = execute_command(e->arguments[0], e->arguments, true, NO_OPTIONS, 0);
 		return ret;
 	}
-	if(e != NULL){
-		int ret = evaluer_expr(e->gauche);
-		ret = evaluer_expr_background(e->droite);
-
+	else if(e->type == SEQUENCE){
+		int ret =  evaluer_expr(e->gauche);
+		ret =  evaluer_expr_background(e->droite);
 		return ret;
+	}
+
+
+	if(e->gauche != NULL){
+		return evaluer_expr(e);
+	}
+	if(e->droite != NULL){
+		return evaluer_expr_background(e->droite);
 	}
 
 	fprintf(stderr, "Not implemented yet !\n");
 	return 1;
 }
 
-int evaluer_expr_redir(Expression *e, int fd, opt_t options){
+int evaluer_expr_redir(Expression *e, bool background, int fd, opt_t options){
 	if(e->type == SIMPLE){
-		int ret = execute_command(e->arguments[0], e->arguments, false, options, fd);
+		int ret = execute_command(e->arguments[0], e->arguments, background, options, fd);
 		return ret;
 	}
 	fprintf(stderr, "Not implemented yet ! \n");
 	return 1;
 }
 
+
+int evaluer_redirection(Expression *e, bool background){
+	if(e->type == REDIRECTION_I){
+
+	}
+	else if(e->type == REDIRECTION_O){
+		int fd = open(e->arguments[0], O_WRONLY | O_CREAT | O_TRUNC, 0666);
+		if(check(fd > 0, "open")){
+			return 1;
+		}
+		int ret = evaluer_expr_redir(e->gauche, background, fd, OUTPUT_RE);
+		close(fd);
+		return ret;
+
+	}
+	else if(e->type == REDIRECTION_A){
+
+	}
+	else if(e->type == REDIRECTION_E){
+
+	}
+	else if(e->type == REDIRECTION_EO){
+
+	}
+	return 1;
+}
 
 
 
@@ -160,18 +193,15 @@ int evaluer_expr(Expression *e)
 	}
 	else if(e->type == BG){
 		int ret = evaluer_expr_background(e->gauche);
-		if(e->droite != NULL){
-			evaluer_expr(e->droite);
-		}else{
-			return ret;
-		}
+		return ret;
+
 	}
 	else if(e->type == REDIRECTION_O){
 		int fd = open(e->arguments[0], O_WRONLY | O_CREAT | O_TRUNC, 0666);
 		if(check(fd > 0, "open")){
 			return 1;
 		}
-		int ret = evaluer_expr_redir(e->gauche, fd, OUTPUT_RE);
+		int ret = evaluer_expr_redir(e->gauche, false, fd, OUTPUT_RE);
 		close(fd);
 		return ret;
 	}
@@ -180,7 +210,7 @@ int evaluer_expr(Expression *e)
 		if(check(fd> 0, "open")){
 			return 1;
 		}
-		int ret = evaluer_expr_redir(e->gauche, fd, INPUT_RE);
+		int ret = evaluer_expr_redir(e->gauche, false, fd, INPUT_RE);
 		close(fd);
 		return ret;
 	}
@@ -189,7 +219,7 @@ int evaluer_expr(Expression *e)
 		if(check(fd > 0, "open")){
 			return 1;
 		}
-		int ret = evaluer_expr_redir(e->gauche, fd, APPEND_RE);
+		int ret = evaluer_expr_redir(e->gauche, false, fd, APPEND_RE);
 		close(fd);
 		return ret;
 	}
@@ -198,7 +228,7 @@ int evaluer_expr(Expression *e)
 		if(check(fd > 0, "open")){
 			return 1;
 		}
-		int ret = evaluer_expr_redir(e->gauche, fd, ERROR_RE);
+		int ret = evaluer_expr_redir(e->gauche, false, fd, ERROR_RE);
 		close(fd);
 		return ret;
 	}
@@ -207,7 +237,7 @@ int evaluer_expr(Expression *e)
 		if(check(fd > 0, "open")){
 			return 1;
 		}
-		int ret = evaluer_expr_redir(e->gauche, fd, ERROR_AND_OUT);
+		int ret = evaluer_expr_redir(e->gauche, true,fd, ERROR_AND_OUT);
 		close(fd);
 		return ret;
 	}
