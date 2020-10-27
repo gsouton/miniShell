@@ -10,10 +10,23 @@
 #include <fcntl.h>
 #include <errno.h>
 
-void check(int cond, char *msg){
+typedef enum OPTIONS {
+	NO_OPTIONS,
+	INPUT_RE,
+	OUTPUT_RE = INPUT_RE << 1,
+	APPEND_RE = OUTPUT_RE << 1,
+	ERROR_RE = APPEND_RE << 1,
+	ERROR_AND_OUT = ERROR_RE << 1,
+	SIZE = 6
+}opt_t;
+
+
+int check(int cond, char *msg){
 	if(!cond){
 		perror(msg);
+		return 1;
 	}
+	return 0;
 }
 
 void kill_zombies(){
@@ -23,18 +36,41 @@ void kill_zombies(){
 		waitpid(w, &wstatus, 0);
 		fprintf(stderr, "%d, Fini\n", w);
 	}
-
-
 }
+
+void manage_input(opt_t options, int fd){
+	if(options == 0){
+		return;
+	}
+	if(options & INPUT_RE){
+		dup2(fd, 0);
+	}
+	if(options & OUTPUT_RE){
+		dup2(fd, 1);
+	}
+	if(options & APPEND_RE){
+		dup2(fd, 1);
+	}
+	if(options & ERROR_RE){
+		dup2(fd, 2);
+	}
+	if(options & ERROR_AND_OUT){
+		dup2(fd, 1);
+		dup2(fd, 2);
+	}
+}
+
 
 /*
  * Will create a child processus to execute a command
  * with execvp with the command and args
  * passed in parameters
  * */
-int execute_simple_command(char *command, char **args, bool background){
+int execute_command(char *command, char **args, bool background, opt_t options, int fd){
 	int pid  = fork();
+
 	if(!pid){
+		manage_input(options, fd);
 		execvp(command, args);
 		exit(EXIT_FAILURE); // if execvp fails it return -1 we could also return the return of execvp but this line would execute only if execvp cannot execute
 	}else{
@@ -53,7 +89,7 @@ int execute_simple_command(char *command, char **args, bool background){
 
 int evaluer_expr_background(Expression *e){
 	if(e->type == SIMPLE){
-		int ret = execute_simple_command(e->arguments[0], e->arguments, true);
+		int ret = execute_command(e->arguments[0], e->arguments, true, NO_OPTIONS, 0);
 		return ret;
 	}
 	if(e != NULL){
@@ -64,6 +100,15 @@ int evaluer_expr_background(Expression *e){
 	}
 
 	fprintf(stderr, "Not implemented yet !\n");
+	return 1;
+}
+
+int evaluer_expr_redir(Expression *e, int fd, opt_t options){
+	if(e->type == SIMPLE){
+		int ret = execute_command(e->arguments[0], e->arguments, false, options, fd);
+		return ret;
+	}
+	fprintf(stderr, "Not implemented yet ! \n");
 	return 1;
 }
 
@@ -82,7 +127,7 @@ int evaluer_expr(Expression *e)
 	}
 
 	if(e->type == SIMPLE){
-		int ret = execute_simple_command(e->arguments[0], e->arguments,false ); // for simple execute command
+		int ret = execute_command(e->arguments[0], e->arguments,false, NO_OPTIONS, 0 ); // for simple execute command
 		return ret; // return status of executing the command
 	}
 
@@ -121,7 +166,51 @@ int evaluer_expr(Expression *e)
 			return ret;
 		}
 	}
-	//else if(e->type == REDIRECTION_O){
+	else if(e->type == REDIRECTION_O){
+		int fd = open(e->arguments[0], O_WRONLY | O_CREAT | O_TRUNC, 0666);
+		if(check(fd > 0, "open")){
+			return 1;
+		}
+		int ret = evaluer_expr_redir(e->gauche, fd, OUTPUT_RE);
+		close(fd);
+		return ret;
+	}
+	else if(e->type == REDIRECTION_I){
+		int fd = open(e->arguments[0], O_RDONLY);
+		if(check(fd> 0, "open")){
+			return 1;
+		}
+		int ret = evaluer_expr_redir(e->gauche, fd, INPUT_RE);
+		close(fd);
+		return ret;
+	}
+	else if(e->type == REDIRECTION_A){
+		int fd = open(e->arguments[0], O_WRONLY + O_APPEND + O_CREAT, 0666);
+		if(check(fd > 0, "open")){
+			return 1;
+		}
+		int ret = evaluer_expr_redir(e->gauche, fd, APPEND_RE);
+		close(fd);
+		return ret;
+	}
+	else if(e->type == REDIRECTION_E){
+		int fd = open(e->arguments[0], O_WRONLY + O_TRUNC + O_CREAT, 0666);
+		if(check(fd > 0, "open")){
+			return 1;
+		}
+		int ret = evaluer_expr_redir(e->gauche, fd, ERROR_RE);
+		close(fd);
+		return ret;
+	}
+	else if(e->type == REDIRECTION_EO){
+		int fd = open(e->arguments[0], O_WRONLY, O_TRUNC + O_CREAT, 0666);
+		if(check(fd > 0, "open")){
+			return 1;
+		}
+		int ret = evaluer_expr_redir(e->gauche, fd, ERROR_AND_OUT);
+		close(fd);
+		return ret;
+	}
 
 
 
