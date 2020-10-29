@@ -28,15 +28,42 @@ int check(int cond, char *msg){
 	return 0;
 }
 
+/*
+ * Parameters =>
+ *	void
+ *
+ * <summary>
+ *		Every time this function is called it will call waitpid to wait
+ *		any child process but no suspend the main process (OPTION WNOHANG)
+ *		If the call of waitpid with no hang doesnt return 0 then the process changed state and then exited
+ *		we then print that the process is finished
+ *</summary>
+ */
 void kill_zombies(){
 	int wstatus;
 	int w = waitpid(-1, &wstatus, WNOHANG);
+	//check( w >= 0, "waitpid");
+
 	if(w > 0){
-		waitpid(w, &wstatus, 0);
+		//waitpid(w, &wstatus, 0);
 		fprintf(stderr, "%d, Fini\n", w);
 	}
 }
 
+/*
+ * Parameters =>
+ *	@opt_t options : options that describe the type of redirection
+ *	@int fd : file descriptor to redirect or to redirect to
+ *	@int *pipe_fd: if not null and options specified it will close the part of the pipe that isn't use in the redirection
+ *
+ * <summary>
+ *		Will look at the options
+ *		and redirect either STDOUT, STDERR, or both or STDIN to be fd
+ *		if pipe is specified not null and with the right options it will close also the
+ *		part of the pipe that is not used
+ *
+ *</summary>
+ */
 void manage_redirection(opt_t options, int fd, int *pipe_fd){
 	if(options == 0){
 		return;
@@ -54,13 +81,24 @@ void manage_redirection(opt_t options, int fd, int *pipe_fd){
 		dup2(fd, 2);
 	}
 	if(options & PIPE_O){
+		dup2(pipe_fd[1], 1);
 		close(pipe_fd[0]);
 	}
 	if(options & PIPE_I){
+		dup2(pipe_fd[0], 0);
 		close(pipe_fd[1]);
 	}
 }
 
+/*
+ * Parameters =>
+ *	@int *pipe_fd : reference to the pipe that you want to close
+ *
+ * <summary>
+ *		Will close both extremity of the pipe
+ *		So make the pipe not usable anymore neither in writing or reading
+ * </summary>
+ */
 void close_pipe(int *pipe_fd){
 	if(pipe_fd){
 		close(pipe_fd[0]);
@@ -93,6 +131,21 @@ int execute_command(char *command, char **args, bool background, opt_t options, 
 	}
 }
 
+/*
+ * Parameters =>
+ *	@char *command : string of the command to execute
+ *	@char **args : arguments of the command
+ *	@opt_t options : Check Evaluation.h mainly options of redirections and pipe, when no options put 0
+ *	@int fd : file descriptor that will be used for redirection specified by options if no options fd wont be used
+ *	@int *pipe_fd : pipe to precise when want to execute a command and redirect it to a pipe options must be specified NULL when no pipe is needed
+ *
+ * <summary>
+ *		Will create a child process
+ *		this child process will do some redirection if needed
+ *		then execute the command if the command fail it will exit
+ *		The father just return the pid of his child
+ *	</summary>
+ */
 int exec_command(char *command, char **args, opt_t options, int fd, int *pipe_fd){
 	int pid = fork();
 
@@ -105,6 +158,7 @@ int exec_command(char *command, char **args, opt_t options, int fd, int *pipe_fd
 
 }
 
+
 int evaluer_expr_redir(Expression *e, bool background, int fd, opt_t options){
 	if(e->type == SIMPLE){
 		int ret = execute_command(e->arguments[0], e->arguments, background, options, fd, NULL);
@@ -116,7 +170,25 @@ int evaluer_expr_redir(Expression *e, bool background, int fd, opt_t options){
 
 
 
+/*
+ * Parameters =>
+ *	@Expression *e : Expression of type redirection to evaluate
+ *	@bool background : bool set to true if the following instructions should be executed in background else to false
+ *
+ * <summary>
+ *		Actually this function only take in parameters expression of type redirection
+ *		REDIRECTION_O, REDIRECTION_E, REDIRECTION_A etc..
+ *		for each case it will open the file given in arguments with the corrects permission, reading, writing, append etc...
+ *		Then it will call the function evaluer_expr_redir with the right filedescriptor and options in parameters
+ *
+ *		This function is only call on the left branch because there is nothing to execute at the right of a redirection
+ *		it will store the return of this function
+ *		close the file
+ *		and return the status
+ * </summary>
+ */
 int evaluer_redirection(Expression *e, bool background){
+
 	if(e->type == REDIRECTION_I){
 		int fd = open(e->arguments[0], O_RDONLY);
 		if(check(fd> 0, "open")){
@@ -178,9 +250,13 @@ int evaluer_redirection(Expression *e, bool background){
 
 int evaluer_expr_background(Expression *e){
 	if(e->type == SIMPLE){
-		int ret = execute_command(e->arguments[0], e->arguments, true, NO_OPTIONS, 0, NULL);
-		//int ret = exec_command(e->arguments[0], e->arguments, NO_OPTIONS, 0, NULL);
-		return ret;
+		//int ret = execute_command(e->arguments[0], e->arguments, true, NO_OPTIONS, 0, NULL);
+		int ret = exec_command(e->arguments[0], e->arguments, NO_OPTIONS, 0, NULL);
+		int status;
+		int w = waitpid(ret, &status, WNOHANG);
+		check(w > 0, "waitpid");
+
+		return status;
 	}
 	else if(e->type == SEQUENCE || e->type == SEQUENCE_ET){
 		int ret =  evaluer_expr(e->gauche);
@@ -208,14 +284,18 @@ int evaluer_expr_background(Expression *e){
 }
 
 
-int manage_pipe(Expression *e, bool background, opt_t option, int pipe_to_redirect, int *pipe_fd){
+int manage_pipe(Expression *e, bool background, opt_t options, int *pipe_fd){
 
 	if(e->type == SIMPLE){
-		return exec_command(e->arguments[0], e->arguments, option, pipe_to_redirect, pipe_fd);
-	}else{
-
-		return evaluer_expr(e);
+		return exec_command(e->arguments[0], e->arguments, options, 0, pipe_fd);
 	}
+
+	else if(e->type >= REDIRECTION_I){
+
+	}
+
+	return evaluer_expr(e);
+
 
 
 }
@@ -237,7 +317,7 @@ int evaluer_expr(Expression *e){
 		int status;
 		int w = waitpid(ret, &status, 0);
 		check(w > 0, "waitpid");
-		
+
 		return status; // return status of executing the command
 	}
 
@@ -273,13 +353,10 @@ int evaluer_expr(Expression *e){
 		return ret;
 
 	}
-	else if(e->type == REDIRECTION_O ||
-			e->type == REDIRECTION_I ||
-			e->type == REDIRECTION_A ||
-			e->type == REDIRECTION_E ||
-			e->type == REDIRECTION_EO){
+	else if(e->type >= REDIRECTION_I){
 		return evaluer_redirection(e, false);
 	}
+
 	else if(e->type == PIPE){
 		int pipe_fd[2];
 		int create_pipe = pipe(pipe_fd);
@@ -287,8 +364,8 @@ int evaluer_expr(Expression *e){
 		int status1, status2;
 
 
-		int left_command = manage_pipe(e->gauche, false, OUTPUT_RE + PIPE_O, pipe_fd[1], pipe_fd);
-		int right_command = manage_pipe(e->droite, false, INPUT_RE + PIPE_I, pipe_fd[0], pipe_fd);
+		int left_command = manage_pipe(e->gauche, false, PIPE_O, pipe_fd);
+		int right_command = manage_pipe(e->droite, false, PIPE_I, pipe_fd);
 		close_pipe(pipe_fd);
 		waitpid(left_command, &status1, 0);
 		waitpid(right_command, &status2, 0);
