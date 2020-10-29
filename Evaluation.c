@@ -179,6 +179,7 @@ int evaluer_redirection(Expression *e, bool background){
 int evaluer_expr_background(Expression *e){
 	if(e->type == SIMPLE){
 		int ret = execute_command(e->arguments[0], e->arguments, true, NO_OPTIONS, 0, NULL);
+		//int ret = exec_command(e->arguments[0], e->arguments, NO_OPTIONS, 0, NULL);
 		return ret;
 	}
 	else if(e->type == SEQUENCE || e->type == SEQUENCE_ET){
@@ -231,8 +232,13 @@ int evaluer_expr(Expression *e){
 	}
 
 	if(e->type == SIMPLE){
-		int ret = execute_command(e->arguments[0], e->arguments,false, NO_OPTIONS, 0, NULL); // for simple execute command
-		return ret; // return status of executing the command
+		//int ret = execute_command(e->arguments[0], e->arguments,false, NO_OPTIONS, 0, NULL); // for simple execute command
+		int ret = exec_command(e->arguments[0], e->arguments, NO_OPTIONS, 0, NULL);
+		int status;
+		int w = waitpid(ret, &status, 0);
+		check(w > 0, "waitpid");
+		
+		return status; // return status of executing the command
 	}
 
 	else if(e->type == SEQUENCE){
