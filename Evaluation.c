@@ -10,16 +10,25 @@
 #include <fcntl.h>
 #include <errno.h>
 
-/*typedef enum OPTIONS {
-  NO_OPTIONS,
-  INPUT_RE,
-  OUTPUT_RE = INPUT_RE << 1,
-  APPEND_RE = OUTPUT_RE << 1,
-  ERROR_RE = APPEND_RE << 1,
-  ERROR_AND_OUT = ERROR_RE << 1
-  }opt_t;*/
+#define ECHO "echo"
+#define CD "cd"
+#define SOURCE "source"
 
+typedef enum INTERN_CMD{
+	NO_INTERN,
+	_ECHO,
+	_CD,
+	_SOURCE
+}intern_cmd;
 
+int not_implemented_yet(void){
+		fprintf(stderr, "Not implemented yet !\n");
+		return 1;
+}
+
+/*
+ * If a cond is not verified do a perror on the last error
+ */
 int check(int cond, char *msg){
 	if(!cond){
 		perror(msg);
@@ -29,9 +38,71 @@ int check(int cond, char *msg){
 }
 
 /*
- * Parameters =>
- *	void
+ * check for a given command as a char* if it is an internal command
  *
+ */
+intern_cmd is_internal_cmd(char *cmd){
+	if(cmd == NULL){
+		//TO DO
+	}
+	else if(!strcmp(ECHO, cmd)){
+		return _ECHO;
+	}
+	else if(!strcmp(CD, cmd)){
+		return _CD;
+	}
+	else if(!strcmp(SOURCE, cmd)){
+		return _SOURCE;
+	}
+	return NO_INTERN;
+}
+
+int echo(char **arguments){
+	if(arguments[1] == NULL){
+		char buffer; //buffer of 1 character
+		int r = 0; // number of character read
+		while((r = read(0, &buffer, sizeof(buffer)) != 0)){
+			int w = write(1, &buffer, r);
+		}
+		return 0;
+	}else{
+		int i = 1;
+		while(arguments[i]){
+			write(1, arguments[i], strlen(arguments[i]));
+			write(1, " ", sizeof(char));
+
+			i++;
+		}
+		write(1, "\n", sizeof(char));
+		return 0;
+	}
+}
+
+
+/*
+ * Will execute an internal command
+ */
+int exec_internal_cmd(intern_cmd typeof_cmd, char **arguments){
+	if(arguments == NULL || typeof_cmd == NO_INTERN){
+		//TO DO;
+	}
+	else if(typeof_cmd == _ECHO){
+		return echo(arguments);
+		//return not_implemented_yet();
+	}
+	else if(typeof_cmd == _CD){
+		return not_implemented_yet();
+	}
+	else if(typeof_cmd == _SOURCE){
+		return not_implemented_yet();
+	}
+	return 1;
+
+}
+
+
+
+/*
  * <summary>
  *		Every time this function is called it will call waitpid to wait
  *		any child process but no suspend the main process (OPTION WNOHANG)
@@ -302,22 +373,26 @@ int manage_pipe(Expression *e, bool background, opt_t options, int *pipe_fd){
 
 
 int evaluer_expr(Expression *e){
+	kill_zombies();
+
 	if(e == NULL){
 		return 1;
 	}
-	kill_zombies();
 
 	if (e->type == VIDE){
 		return 0;
 	}
 
 	if(e->type == SIMPLE){
-		//int ret = execute_command(e->arguments[0], e->arguments,false, NO_OPTIONS, 0, NULL); // for simple execute command
-		int ret = exec_command(e->arguments[0], e->arguments, NO_OPTIONS, 0, NULL);
-		int status;
-		int w = waitpid(ret, &status, 0);
-		check(w > 0, "waitpid");
+		intern_cmd typeof_cmd = is_internal_cmd(e->arguments[0]);
+		if(typeof_cmd != NO_INTERN){ //if the command is an internal command
+			return exec_internal_cmd(typeof_cmd, e->arguments);
+		}
 
+		int pid = exec_command(e->arguments[0], e->arguments, NO_OPTIONS, 0, NULL); // exec the command
+		int status; // status exit of the child
+		int w = waitpid(pid, &status, 0); //wait for the child
+		check(w > 0, "waitpid");
 		return status; // return status of executing the command
 	}
 
@@ -376,10 +451,24 @@ int evaluer_expr(Expression *e){
 
 	}
 
+	return not_implemented_yet();
 
-	fprintf(stderr, "not yet implemented \n");
+
+
+}
+
+int check_for_intern(Expression *e){
+	if(e->type != SIMPLE){
+		fprintf(stderr, "Wrong ue of check for intern\n");
+		return 1;
+	}
+	if(! strcmp("echo", e->arguments[0])){
+		//fprintf(stderr, "internal command to code !! <echo>\n");
+		return echo(e->arguments);
+	}
+	else if(! strcmp("cd", e->arguments[0])){
+		fprintf(stderr, "internal command to code!! <cd> \n");
+		return 1;
+	}
 	return 1;
-
-
-
 }
