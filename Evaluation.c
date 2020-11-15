@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <signal.h>
 
 #define ECHO "echo"
 #define CD "cd"
@@ -74,31 +75,52 @@ intern_cmd is_internal_cmd(char *cmd){
 }
 
 int echo(char **arguments){
-	if(arguments[1] == NULL){ // if no argument
-		int w = write(1, "\n", sizeof(char));
-		return 0;
-	}else{
 		int i = 1;
+		int w;
 		while(arguments[i]){
-			write(1, arguments[i], strlen(arguments[i]));
-			write(1, " ", sizeof(char));
+			w = write(1, arguments[i], strlen(arguments[i]));
+			check(w > 0, "write ");
+			w = write(1, " ", sizeof(char));
+			check(w > 0, "write ");
 
 			i++;
 		}
-		write(1, "\n", sizeof(char));
+		w = write(1, "\n", sizeof(char));
+		check(w > 0, "write");
+
 		return 0;
+}
+
+int source(char **arguments){
+	int fd = open(arguments[1], O_RDONLY); // open the file
+	check(fd >= 0, "open"); // check opening
+	int pid = fork(); // create a child
+	if(pid == 0){ //child
+		dup2(fd, 0); //redirect input as the file
+		return 0;
+		//int status = execl("./Shell", "Shell", NULL); // execute a shell which has as input the file
+		//exit(status);
 	}
+	waitpid(pid, &status, 0);
+	return status;
 }
 
 
 /*
  * Will execute an internal command
  */
-int exec_internal_cmd(intern_cmd typeof_cmd, char **arguments){
+int exec_internal_cmd(intern_cmd typeof_cmd, char **arguments, bool background){
 	if(arguments == NULL || typeof_cmd == NO_INTERN){
 		//TO DO;
 	}
 	else if(typeof_cmd == _ECHO){
+		if(background){
+			int pid = fork();
+			if(!pid){
+				exit(echo(arguments)); // exit the program as a child because return is link to an adress
+			}
+			return 0;
+		}
 		return echo(arguments);
 		//return not_implemented_yet();
 	}
@@ -106,7 +128,7 @@ int exec_internal_cmd(intern_cmd typeof_cmd, char **arguments){
 		return not_implemented_yet();
 	}
 	else if(typeof_cmd == _SOURCE){
-		return not_implemented_yet();
+		return source(arguments);
 	}
 	return 1;
 
@@ -147,7 +169,7 @@ int exec_command(char **args, expr_t option, int fd){
 int execute_command(char **args, bool background, expr_t option, int fd){
 	intern_cmd typeof_cmd = is_internal_cmd(args[0]);
 	if(typeof_cmd != NO_INTERN){ //if the command is an internal command
-		return exec_internal_cmd(typeof_cmd, args);
+		return exec_internal_cmd(typeof_cmd, args	, background);
 	}
 
 	pid_t pid = exec_command(args, option, fd); // execute the command
@@ -176,216 +198,42 @@ int execute_command(char **args, bool background, expr_t option, int fd){
 void kill_zombies(){
 	int wstatus;
 	int w = waitpid(-1, &wstatus, WNOHANG);
-	//check( w >= 0, "waitpid");
+	//check(w < 0, "waitpid");
+	if(w >= 0){
+		fprintf(stderr, "process %d\n", w);
+	}
+	if(w > 0 && WIFSIGNALED(wstatus)){
+		fprintf(stderr, "process %d was signaled\n", w);
+		fprintf(stderr, "%s\n", strsignal(WTERMSIG(wstatus)));
+	}
+	if(w > 0 && WIFSTOPPED(wstatus)){
+		fprintf(stderr, "process %d was stopped\n");
+	}
 
-	if(w > 0){
-		//waitpid(w, &wstatus, 0);
+	if(WIFEXITED(wstatus)){
 		fprintf(stderr, "%d, Fini\n", w);
 	}
+
 }
 
-/*
- * Parameters =>
- *	@opt_t options : options that describe the type of redirection
- *	@int fd : file descriptor to redirect or to redirect to
- *	@int *pipe_fd: if not null and options specified it will close the part of the pipe that isn't use in the redirection
- *
- * <summary>
- *		Will look at the options
- *		and redirect either STDOUT, STDERR, or both or STDIN to be fd
- *		if pipe is specified not null and with the right options it will close also the
- *		part of the pipe that is not used
- *
- *</summary>
- */
-/*void manage_redirection(opt_t options, int fd, int *pipe_fd){
-	if(options == 0){
-		return;
-	}
-	if(options & INPUT_RE){
-		dup2(fd, 0);
-	}
-	if(options & OUTPUT_RE){
-		dup2(fd, 1);
-	}
-	if(options & APPEND_RE){
-		dup2(fd, 1);
-	}
-	if(options & ERROR_RE){
-		dup2(fd, 2);
-	}
-	if(options & PIPE_O){
-		dup2(pipe_fd[1], 1);
-		close(pipe_fd[0]);
-	}
-	if(options & PIPE_I){
-		dup2(pipe_fd[0], 0);
-		close(pipe_fd[1]);
-	}
-}*/
+
 
 /*
  * Parameters =>
- *	@int *pipe_fd : reference to the pipe that you want to close
+ *	@int *pipefile : reference to the pipe that you want to close
  *
  * <summary>
  *		Will close both extremity of the pipe
  *		So make the pipe not usable anymore neither in writing or reading
  * </summary>
  */
-void close_pipe(int *pipe_fd){
-	if(pipe_fd){
-		close(pipe_fd[0]);
-		close(pipe_fd[1]);
+void close_pipe(int *pipefile){
+	if(pipefile){
+		close(pipefile[0]);
+		close(pipefile[1]);
 	}
 }
 
-
-/*
-
-
-
-
-/*int evaluer_expr_redir(Expression *e, bool background, int fd, opt_t options){
-	/*if(e->type == SIMPLE){
-		int ret = execute_command(e->arguments[0], e->arguments, background, options, fd, NULL);
-		return ret;
-	}
-	fprintf(stderr, "Not implemented yet ! \n");
-	return 1;
-}*/
-
-
-
-/*
- * Parameters =>
- *	@Expression *e : Expression of type redirection to evaluate
- *	@bool background : bool set to true if the following instructions should be executed in background else to false
- *
- * <summary>
- *		Actually this function only take in parameters expression of type redirection
- *		REDIRECTION_O, REDIRECTION_E, REDIRECTION_A etc..
- *		for each case it will open the file given in arguments with the corrects permission, reading, writing, append etc...
- *		Then it will call the function evaluer_expr_redir with the right filedescriptor and options in parameters
- *
- *		This function is only call on the left branch because there is nothing to execute at the right of a redirection
- *		it will store the return of this function
- *		close the file
- *		and return the status
- * </summary>
- */
-/*int evaluer_redirection(Expression *e, bool background){
-
-	if(e->type == REDIRECTION_I){
-		int fd = open(e->arguments[0], O_RDONLY);
-		if(check(fd> 0, "open")){
-			return 1;
-		}
-		int ret = evaluer_expr_redir(e->gauche, background, fd, INPUT_RE);
-		close(fd);
-		return ret;
-
-	}
-	else if(e->type == REDIRECTION_O){
-		int fd = open(e->arguments[0], O_WRONLY | O_CREAT | O_TRUNC, 0666);
-		if(check(fd > 0, "open")){
-			return 1;
-		}
-		int ret = evaluer_expr_redir(e->gauche, background, fd, OUTPUT_RE);
-		close(fd);
-		return ret;
-
-	}
-	else if(e->type == REDIRECTION_A){
-		int fd = open(e->arguments[0], O_WRONLY + O_APPEND + O_CREAT, 0666);
-		if(check(fd > 0, "open")){
-			return 1;
-		}
-		int ret = evaluer_expr_redir(e->gauche, background, fd, APPEND_RE);
-		close(fd);
-		return ret;
-
-	}
-	else if(e->type == REDIRECTION_E){
-		int fd = open(e->arguments[0], O_WRONLY + O_TRUNC + O_CREAT, 0666);
-		if(check(fd > 0, "open")){
-			return 1;
-		}
-		int ret = evaluer_expr_redir(e->gauche, background, fd, ERROR_RE);
-		close(fd);
-		return ret;
-
-	}
-	else if(e->type == REDIRECTION_EO){
-		int fd = open(e->arguments[0], O_WRONLY + O_TRUNC + O_CREAT, 0666);
-		if(check(fd > 0, "open")){
-			return 1;
-		}
-		int ret = evaluer_expr_redir(e->gauche, background,fd, OUTPUT_RE + ERROR_RE);
-		close(fd);
-		return ret;
-
-	}
-	return 1;
-}*/
-
-
-
-
-
-
-
-/*int evaluer_expr_background(Expression *e){
-	if(e->type == SIMPLE){
-		//int ret = execute_command(e->arguments[0], e->arguments, true, NO_OPTIONS, 0, NULL);
-		/*int ret = exec_command(e->arguments[0], e->arguments, NO_OPTIONS, 0, NULL);
-		int status;
-		int w = waitpid(ret, &status, WNOHANG);
-		check(w > 0, "waitpid");
-
-		return status;
-	}
-	else if(e->type == SEQUENCE || e->type == SEQUENCE_ET){
-		int ret =  evaluer_expr(e->gauche);
-		ret =  evaluer_expr_background(e->droite);
-		return ret;
-	}
-
-	else if(e->type == REDIRECTION_O ||
-			e->type == REDIRECTION_I ||
-			e->type == REDIRECTION_A ||
-			e->type == REDIRECTION_E ||
-			e->type == REDIRECTION_EO){
-		return evaluer_redirection(e, true);
-	}
-
-	if(e->gauche != NULL){
-		return evaluer_expr(e);
-	}
-	if(e->droite != NULL){
-		return evaluer_expr_background(e->droite);
-	}
-
-	fprintf(stderr, "Not implemented yet !\n");
-	return 1;
-}
-
-
-int manage_pipe(Expression *e, bool background, opt_t options, int *pipe_fd){
-
-	if(e->type == SIMPLE){
-		//return exec_command(e->arguments[0], e->arguments, options, 0, pipe_fd);
-	}
-
-	else if(e->type >= REDIRECTION_I){
-
-	}
-
-	return evaluer_expr(e);
-
-
-
-}*/
 
 int evaluer_expr_bg(Expression *e, bool background){
 	if(e == NULL){
@@ -409,23 +257,54 @@ int evaluer_redirection(Expression *e, bool background, expr_t option, int fd){
 		return execute_command(e->arguments, background, option, fd);
 	}
 	else if(e->type == REDIRECTION_I){
-		int _fd = open(e->arguments[0], O_RDONLY);
-		check(_fd >= 0, "open");
+		int file = open(e->arguments[0], O_RDONLY);
+		check(file >= 0, "open");
 		int save_i = dup(0);
-		dup2(_fd, 0);
-		int status = evaluer_redirection(e->gauche, background, e->type, _fd);
+		dup2(file, 0);
+		int status = evaluer_redirection(e->gauche, background, e->type, file);
 		dup2(save_i, 0);
 		return status;
 	}
 	else if(e->type == REDIRECTION_O){
-		int _fd = open(e->arguments[0], O_WRONLY + O_TRUNC + O_CREAT, 0666);
-		check(fd >= 0, "open:");
+		int file = open(e->arguments[0], O_WRONLY + O_TRUNC + O_CREAT, 0666);
+		check(file >= 0, "open:");
 		int save_o = dup(1);
-		dup2(_fd, 1);
-		int status = evaluer_redirection(e->gauche, background, e->type, _fd);
+		dup2(file, 1);
+		int status = evaluer_redirection(e->gauche, background, e->type, file);
 		dup2(save_o, 1);
 		return status;
 	}
+	else if(e->type == REDIRECTION_A){
+		int file = open(e->arguments[0], O_WRONLY + O_APPEND + O_CREAT, 0666);
+		check(file >= 0, "open");
+		int save_o = dup(1);
+		dup2(file, 1);
+		int status = evaluer_redirection(e->gauche, background, e->type, file);
+		dup2(save_o, 1);
+		return status;
+	}
+	else if(e->type == REDIRECTION_E){
+		int file = open(e->arguments[0], O_WRONLY + O_CREAT, 0666);
+		check(file >= 0, "open");
+		int save_e = dup(2);
+		dup2(file, 2);
+		int status = evaluer_redirection(e->gauche, background, e->type, file);
+		dup2(save_e, 2);
+		return status;
+	}
+	else if(e->type == REDIRECTION_EO){
+		int file = open(e->arguments[0], O_WRONLY + O_CREAT, 0666);
+		check(file >= 0, "open");
+		int save_e = dup(2);
+		int save_o = dup(1);
+		dup2(file, 1);
+		dup2(file, 2);
+		int status = evaluer_redirection(e->gauche, background, e->type, file);
+		dup2(save_e, 2);
+		dup2(save_o, 1);
+		return status;
+	}
+
 }
 
 
@@ -473,25 +352,10 @@ int evaluer_expr(Expression *e){
 	else if(e->type >= REDIRECTION_I){
 		return evaluer_redirection(e, false, 0, 0);
 	}
+	else if(e->type == PIPE){
+		
 
-	/*else if(e->type == PIPE){
-		int pipe_fd[2];
-		int create_pipe = pipe(pipe_fd);
-		check(create_pipe == 0, "pipe");
-		int status1, status2;
-
-
-		int left_command = manage_pipe(e->gauche, false, PIPE_O, pipe_fd);
-		int right_command = manage_pipe(e->droite, false, PIPE_I, pipe_fd);
-		close_pipe(pipe_fd);
-		waitpid(left_command, &status1, 0);
-		waitpid(right_command, &status2, 0);
-		if(status1 != 0){
-			return status1;
-		}
-		return status2;
-
-	}*/
+	}
 
 	return not_implemented_yet();
 
