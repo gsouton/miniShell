@@ -9,6 +9,7 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <stdarg.h>
 
 #define ECHO "echo"
 #define CD "cd"
@@ -20,6 +21,20 @@ typedef enum INTERN_CMD{
 	_CD,
 	_SOURCE
 }intern_cmd;
+
+typedef enum TYPE_OF_REDIRECTION{
+	NO_REDIRECTION,
+	INPUT,  // Redirection entree
+  OUTPUT = INPUT << 1,  // Redirection sortie standard
+  APPEND = OUTPUT << 1,  // Redirection sortie standard, mode append
+  ERROR = APPEND << 1,  // Redirection sortie erreur
+  ERROR_N_OUT = ERROR << 1
+}type_of_redirection;
+
+typedef struct REDIRECTION_OBJ{
+	int fd;
+	type_of_redirection type;
+}obj_rdr;
 
 int not_implemented_yet(void){
 		fprintf(stderr, "Not implemented yet !\n");
@@ -36,6 +51,7 @@ int check(int cond, char *msg){
 	}
 	return 0;
 }
+
 
 /*
  * check for a given command as a char* if it is an internal command
@@ -58,12 +74,8 @@ intern_cmd is_internal_cmd(char *cmd){
 }
 
 int echo(char **arguments){
-	if(arguments[1] == NULL){
-		char buffer; //buffer of 1 character
-		int r = 0; // number of character read
-		while((r = read(0, &buffer, sizeof(buffer)) != 0)){
-			int w = write(1, &buffer, r);
-		}
+	if(arguments[1] == NULL){ // if no argument
+		int w = write(1, "\n", sizeof(char));
 		return 0;
 	}else{
 		int i = 1;
@@ -97,6 +109,57 @@ int exec_internal_cmd(intern_cmd typeof_cmd, char **arguments){
 		return not_implemented_yet();
 	}
 	return 1;
+
+}
+
+void redirection(expr_t option, int fd){
+	switch (option) {
+		case REDIRECTION_I:
+			dup2(fd, 0);
+			break;
+		case REDIRECTION_O:
+			dup2(fd, 1);
+		default:
+			break;
+	}
+}
+
+/* <summary>
+*		Will create a child process
+*		The child will execute the command with execvp and then return
+*    the pid
+*   	The caller as to deal with the pid and waiting
+*	</summary>
+*/
+int exec_command(char **args, expr_t option, int fd){
+ int child = fork(); // create a child process
+
+ if(!child){ // code to execute for the child process
+	 //redirection(option, fd);
+	 execvp(args[0], args);
+	 fprintf(stderr, "%s : command not found\n", args[0]);
+	 exit(EXIT_FAILURE); // if execvp fails exit failure
+ }
+ return child; // return the pid of the child
+
+}
+
+int execute_command(char **args, bool background, expr_t option, int fd){
+	intern_cmd typeof_cmd = is_internal_cmd(args[0]);
+	if(typeof_cmd != NO_INTERN){ //if the command is an internal command
+		return exec_internal_cmd(typeof_cmd, args);
+	}
+
+	pid_t pid = exec_command(args, option, fd); // execute the command
+
+	if(background){ // if background == true we don't wait for children
+		return 0;
+	}
+	int status; // status exit of the child
+	int w = waitpid(pid, &status, 0); //wait for the child
+	check(w > 0, "waitpid");
+	return status; // return status of executing the command
+
 
 }
 
@@ -135,7 +198,7 @@ void kill_zombies(){
  *
  *</summary>
  */
-void manage_redirection(opt_t options, int fd, int *pipe_fd){
+/*void manage_redirection(opt_t options, int fd, int *pipe_fd){
 	if(options == 0){
 		return;
 	}
@@ -159,7 +222,7 @@ void manage_redirection(opt_t options, int fd, int *pipe_fd){
 		dup2(pipe_fd[0], 0);
 		close(pipe_fd[1]);
 	}
-}
+}*/
 
 /*
  * Parameters =>
@@ -179,65 +242,18 @@ void close_pipe(int *pipe_fd){
 
 
 /*
- * Will create a child processus to execute a command
- * with execvp with the command and args
- * passed in parameters
- * */
-int execute_command(char *command, char **args, bool background, opt_t options, int fd, int *pipe_fd){
-	int pid  = fork();
-
-	if(!pid){
-		manage_redirection(options, fd, pipe_fd);
-		execvp(command, args);
-		exit(EXIT_FAILURE); // if execvp fails it return -1 we could also return the return of execvp but this line would execute only if execvp cannot execute
-	}else{
-		int wstatus = 0;
-		if(!background){
-			waitpid(pid, &wstatus, 0);
-
-		}else{
-			fprintf(stderr, "Process executed in background %d\n",pid);
-		}
-		return wstatus;
-	}
-}
-
-/*
- * Parameters =>
- *	@char *command : string of the command to execute
- *	@char **args : arguments of the command
- *	@opt_t options : Check Evaluation.h mainly options of redirections and pipe, when no options put 0
- *	@int fd : file descriptor that will be used for redirection specified by options if no options fd wont be used
- *	@int *pipe_fd : pipe to precise when want to execute a command and redirect it to a pipe options must be specified NULL when no pipe is needed
- *
- * <summary>
- *		Will create a child process
- *		this child process will do some redirection if needed
- *		then execute the command if the command fail it will exit
- *		The father just return the pid of his child
- *	</summary>
- */
-int exec_command(char *command, char **args, opt_t options, int fd, int *pipe_fd){
-	int pid = fork();
-
-	if(!pid){
-		manage_redirection(options, fd, pipe_fd);
-		execvp(command, args);
-		exit(EXIT_FAILURE);
-	}
-	return pid;
-
-}
 
 
-int evaluer_expr_redir(Expression *e, bool background, int fd, opt_t options){
-	if(e->type == SIMPLE){
+
+
+/*int evaluer_expr_redir(Expression *e, bool background, int fd, opt_t options){
+	/*if(e->type == SIMPLE){
 		int ret = execute_command(e->arguments[0], e->arguments, background, options, fd, NULL);
 		return ret;
 	}
 	fprintf(stderr, "Not implemented yet ! \n");
 	return 1;
-}
+}*/
 
 
 
@@ -258,7 +274,7 @@ int evaluer_expr_redir(Expression *e, bool background, int fd, opt_t options){
  *		and return the status
  * </summary>
  */
-int evaluer_redirection(Expression *e, bool background){
+/*int evaluer_redirection(Expression *e, bool background){
 
 	if(e->type == REDIRECTION_I){
 		int fd = open(e->arguments[0], O_RDONLY);
@@ -311,7 +327,7 @@ int evaluer_redirection(Expression *e, bool background){
 
 	}
 	return 1;
-}
+}*/
 
 
 
@@ -319,10 +335,10 @@ int evaluer_redirection(Expression *e, bool background){
 
 
 
-int evaluer_expr_background(Expression *e){
+/*int evaluer_expr_background(Expression *e){
 	if(e->type == SIMPLE){
 		//int ret = execute_command(e->arguments[0], e->arguments, true, NO_OPTIONS, 0, NULL);
-		int ret = exec_command(e->arguments[0], e->arguments, NO_OPTIONS, 0, NULL);
+		/*int ret = exec_command(e->arguments[0], e->arguments, NO_OPTIONS, 0, NULL);
 		int status;
 		int w = waitpid(ret, &status, WNOHANG);
 		check(w > 0, "waitpid");
@@ -358,7 +374,7 @@ int evaluer_expr_background(Expression *e){
 int manage_pipe(Expression *e, bool background, opt_t options, int *pipe_fd){
 
 	if(e->type == SIMPLE){
-		return exec_command(e->arguments[0], e->arguments, options, 0, pipe_fd);
+		//return exec_command(e->arguments[0], e->arguments, options, 0, pipe_fd);
 	}
 
 	else if(e->type >= REDIRECTION_I){
@@ -369,6 +385,47 @@ int manage_pipe(Expression *e, bool background, opt_t options, int *pipe_fd){
 
 
 
+}*/
+
+int evaluer_expr_bg(Expression *e, bool background){
+	if(e == NULL){
+		fprintf(stderr, "Expression passed in parameter is NULL\n");
+		return 1;
+	}
+	else if(e->type == SIMPLE){
+		return execute_command(e->arguments, true, 0, 0);
+	}
+
+	return evaluer_expr(e->gauche);
+	return evaluer_expr_bg(e->droite, true);
+}
+
+int evaluer_redirection(Expression *e, bool background, expr_t option, int fd){
+	if(e == NULL){
+		fprintf(stderr, "Expression passed in parameter is NULL\n");
+		return 1;
+	}
+	if(e->type == SIMPLE){
+		return execute_command(e->arguments, background, option, fd);
+	}
+	else if(e->type == REDIRECTION_I){
+		int _fd = open(e->arguments[0], O_RDONLY);
+		check(_fd >= 0, "open");
+		int save_i = dup(0);
+		dup2(_fd, 0);
+		int status = evaluer_redirection(e->gauche, background, e->type, _fd);
+		dup2(save_i, 0);
+		return status;
+	}
+	else if(e->type == REDIRECTION_O){
+		int _fd = open(e->arguments[0], O_WRONLY + O_TRUNC + O_CREAT, 0666);
+		check(fd >= 0, "open:");
+		int save_o = dup(1);
+		dup2(_fd, 1);
+		int status = evaluer_redirection(e->gauche, background, e->type, _fd);
+		dup2(save_o, 1);
+		return status;
+	}
 }
 
 
@@ -376,6 +433,7 @@ int evaluer_expr(Expression *e){
 	kill_zombies();
 
 	if(e == NULL){
+		fprintf(stderr, "Expression passed in parameter is NULL\n");
 		return 1;
 	}
 
@@ -384,55 +442,39 @@ int evaluer_expr(Expression *e){
 	}
 
 	if(e->type == SIMPLE){
-		intern_cmd typeof_cmd = is_internal_cmd(e->arguments[0]);
-		if(typeof_cmd != NO_INTERN){ //if the command is an internal command
-			return exec_internal_cmd(typeof_cmd, e->arguments);
-		}
-
-		int pid = exec_command(e->arguments[0], e->arguments, NO_OPTIONS, 0, NULL); // exec the command
-		int status; // status exit of the child
-		int w = waitpid(pid, &status, 0); //wait for the child
-		check(w > 0, "waitpid");
-		return status; // return status of executing the command
+		return execute_command(e->arguments, false, 0, 0);
 	}
 
 	else if(e->type == SEQUENCE){
-		int ret = evaluer_expr(e->gauche); // first evaluating left
-		ret = evaluer_expr(e->droite); // then evaluate right
-		return ret; //status
+		evaluer_expr(e->gauche); // first evaluating left but
+		return evaluer_expr(e->droite); // then evaluate right
+		//we only return the value of the last cmd of the sequence ;
 	}
 
 	else if(e->type == SEQUENCE_ET){
-		int ret = 0;
-		if((ret = evaluer_expr(e->gauche)) == 0){ // if the evaluation of left has no error (means returned 0)
-			if((ret = evaluer_expr(e->droite)) == 0){ // if the evaluation of the right doesnt return errors
-				return ret;
-			}
+		int status = evaluer_expr(e->gauche);
+		if(!status){ // if the evaluation of left has no error (means returned 0)
+			return evaluer_expr(e->droite); //evaluate the right member
 		}
-		return ret;
+		return status; //else return error of left memeber
 	}
 
 	else if(e->type == SEQUENCE_OU){
-		int ret = 0;
-		if((ret = evaluer_expr(e->gauche) ) == 0){ // if the first expression is correct no errors returned
-			//fprintf(stderr, "ret = %d", ret);
-			return ret; // stop execution return success;
+		int status = evaluer_expr(e->gauche);
+		if(status){ // if left member fails
+			return evaluer_expr(e->droite);
 		}
-		else if( (ret = evaluer_expr(e->droite)) == 0){ // execute this if first expression fail
-			return ret;
-		}
-		return ret;
+		return status;
 	}
-	else if(e->type == BG){
-		int ret = evaluer_expr_background(e->gauche);
-		return ret;
 
+	else if(e->type == BG){
+		return evaluer_expr_bg(e->gauche, true);
 	}
 	else if(e->type >= REDIRECTION_I){
-		return evaluer_redirection(e, false);
+		return evaluer_redirection(e, false, 0, 0);
 	}
 
-	else if(e->type == PIPE){
+	/*else if(e->type == PIPE){
 		int pipe_fd[2];
 		int create_pipe = pipe(pipe_fd);
 		check(create_pipe == 0, "pipe");
@@ -449,26 +491,9 @@ int evaluer_expr(Expression *e){
 		}
 		return status2;
 
-	}
+	}*/
 
 	return not_implemented_yet();
 
 
-
-}
-
-int check_for_intern(Expression *e){
-	if(e->type != SIMPLE){
-		fprintf(stderr, "Wrong ue of check for intern\n");
-		return 1;
-	}
-	if(! strcmp("echo", e->arguments[0])){
-		//fprintf(stderr, "internal command to code !! <echo>\n");
-		return echo(e->arguments);
-	}
-	else if(! strcmp("cd", e->arguments[0])){
-		fprintf(stderr, "internal command to code!! <cd> \n");
-		return 1;
-	}
-	return 1;
 }

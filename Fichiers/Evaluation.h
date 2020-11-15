@@ -2,14 +2,7 @@
 #define _EVALUATION_H
 
 #include "Shell.h"
-#include <stdbool.h>
 
 extern int evaluer_expr(Expression *e);
-
-
-
-
-
-
 
 #endif
