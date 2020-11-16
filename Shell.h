@@ -11,18 +11,18 @@
 
 typedef enum expr_t
 {
-  VIDE,           // Commande vide
-  SIMPLE,         // Commande simple
-  SEQUENCE,       // Séquence (;)
-  SEQUENCE_ET,    // Séquence conditionnelle (&&)
-  SEQUENCE_OU,    // Séquence conditionnelle (||)
-  BG,             // Tache en arriere plan
-  PIPE,           // Pipe
-  REDIRECTION_I,  // Redirection entree
-  REDIRECTION_O,  // Redirection sortie standard
-  REDIRECTION_A,  // Redirection sortie standard, mode append
-  REDIRECTION_E,  // Redirection sortie erreur
-  REDIRECTION_EO, // Redirection sorties erreur et standard
+  VIDE,           // 0 Commande vide
+  SIMPLE,         // 1 Commande simple
+  SEQUENCE,       // 2 Sï¿½quence (;)
+  SEQUENCE_ET,    // 3 Sï¿½quence conditionnelle (&&)
+  SEQUENCE_OU,    // 4 Sï¿½quence conditionnelle (||)
+  BG,             // 5 Tache en arriere plan
+  PIPE,           // 6 Pipe
+  REDIRECTION_I,  // 7 Redirection entree               0111
+  REDIRECTION_O,  // 8 Redirection sortie standard      1000
+  REDIRECTION_A,  // 9 Redirection sortie standard, mode append
+  REDIRECTION_E,  // 10 Redirection sortie erreur
+  REDIRECTION_EO, // 11 Redirection sorties erreur et standard
 } expr_t;
 
 typedef struct Expression
