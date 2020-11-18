@@ -15,29 +15,30 @@
 #define CD "cd"
 #define SOURCE "source"
 
+/**
+ * @brief enum to know which type of internal command to execute
+ * 
+ */
 typedef enum INTERN_CMD { NO_INTERN, _ECHO, _CD, _SOURCE } intern_cmd;
 
-typedef enum TYPE_OF_REDIRECTION {
-  NO_REDIRECTION,
-  INPUT,                // Redirection entree
-  OUTPUT = INPUT << 1,  // Redirection sortie standard
-  APPEND = OUTPUT << 1, // Redirection sortie standard, mode append
-  ERROR = APPEND << 1,  // Redirection sortie erreur
-  ERROR_N_OUT = ERROR << 1
-} type_of_redirection;
 
-typedef struct REDIRECTION_OBJ {
-  int fd;
-  type_of_redirection type;
-} obj_rdr;
-
+/**
+ * @brief Return 1 with a message that the functionality is not implemented
+ * 
+ * @return int 
+ */
 int not_implemented_yet(void) {
   fprintf(stderr, "Not implemented yet !\n");
   return 1;
 }
 
-/*
- * If a cond is not verified do a perror on the last error
+/**
+ * @brief check that the condition is true if not
+ * 				return 1 and show the last error with perror
+ * 
+ * @param cond condition to check
+ * @param msg message to display
+ * @return int 
  */
 int check(int cond, char *msg) {
   if (!cond) {
@@ -47,9 +48,14 @@ int check(int cond, char *msg) {
   return 0;
 }
 
-/*
- * check for a given command as a char* if it is an internal command
- *
+
+/**
+ * @brief Return an internal_cmd,
+ * 				basically check if a command is an internal command or not
+ * 				if the command is not internal NO_INTERN is returned else see the enum intern_cmd
+ * 
+ * @param cmd command to execute (string of character)
+ * @return intern_cmd 
  */
 intern_cmd is_internal_cmd(char *cmd) {
   if (cmd == NULL) {
@@ -64,6 +70,14 @@ intern_cmd is_internal_cmd(char *cmd) {
   return NO_INTERN;
 }
 
+/**
+ * @brief Copy of the function echo in bash =>
+ * 				function repeat the input given,
+ * 				if NULL is given just do an empty line
+ * 
+ * @param arguments Strings to repeat 
+ * @return int 
+ */
 int echo(char **arguments) {
   int i = 1;
   int w;
@@ -81,6 +95,15 @@ int echo(char **arguments) {
   return 0;
 }
 
+
+/**
+ * @brief Copy of the source command, execute the command given through a file
+ * 				Basically a shell is executed in a child and read from a file instead of the normal
+ * 				tty, so it's reading the command from the file and execute them one by one.
+ * 
+ * @param arguments name of the file to read from (no options implemented) 
+ * @return int return 
+ */
 int source(char **arguments) {
   int fd = open(arguments[1], O_RDONLY); // open the file
   check(fd >= 0, "open");                // check opening
@@ -91,12 +114,19 @@ int source(char **arguments) {
     // int status = execl("./Shell", "Shell", NULL); // execute a shell which
     // has as input the file exit(status);
   }
-  waitpid(pid, &status, 0);
+  waitpid(pid, &status, 0); // wait for the child to finish
   return status;
 }
 
-/*
- * Will execute an internal command
+/**
+ * @brief Execute an internal command (only internal)
+ * 				Look at the typeof_cmd and execute the command that correspond to it
+ * 				Of not implemented error message will be displayed
+ * 
+ * @param typeof_cmd enum inter_cmd to know which command to execute 0 is always no command
+ * @param arguments the arguments is the command itself with its arguments
+ * @param background boolean set to true if the command should be executed in the background
+ * @return int return 1 if error else 0
  */
 int exec_internal_cmd(intern_cmd typeof_cmd, char **arguments,
                       bool background) {
@@ -120,7 +150,17 @@ int exec_internal_cmd(intern_cmd typeof_cmd, char **arguments,
   }
   return 1;
 }
-
+/**
+ * @brief Given the type of redirection through option and a pipe will redirect STDOUT_FILENO
+ * 				and STDIN_FILENO to the right end of the pipe.
+ * 
+ * @param option option that correspond to the type of redirection wanted
+ * 							 REDIRECTION_I => redirect the standard input to pipe[0] (and close pipe[1])
+ * 							 REDIRECTION_O => redirect the standard output to pipe[1] (and close pipe[0])
+ * 							 PIPE => redirect both standard output and input
+ *  
+ * @param pipe_fd pipe to redirect to
+ */
 void manage_pipe_redirection(expr_t option, int *pipe_fd) {
   if (option == REDIRECTION_I) {
     dup2(pipe_fd[0], 0);
@@ -136,39 +176,73 @@ void manage_pipe_redirection(expr_t option, int *pipe_fd) {
   }
 }
 
-/* <summary>
- *		Will create a child process
- *		The child will execute the command with execvp and then return
- *    the pid
- *    The caller as to deal with the pid and waiting
- *	</summary>
+/**
+ * @brief Execute a command using execvp (Cannot execute internal command)
+ * 
+ * 				Create a child process to execute a command given through **args
+ * 				if option set to 0 and pipe to NULL the return value is the pid of the child process
+ * 				Meaning the caller of this function is responsible to wait or not for this child.$
+ * 				If option and pipe set to correct values, the function will return 0 
+ * 				command will be executed in background and the child will become a zombie if the child process
+ * 				finish its job 
+ * 
+ * @param args Command and its arguments to execute
+ * @param option option for the redirection of the pipe
+ * 							 REDIRECTION_I => redirect STDIN_FILENO to pipe[0] (close pipe[1])
+ * 							 REDIRECTION_O => redirect STDOUT_FILENO to pipe[1] (close pipe[0])
+ * 							 PIPE => redirect both STDOUT_FILENO and STDIN_FILENO
+ * @param pipe Pipe (must be initialized before the call of this function) 
+ * @return int pid of child if option = 0 and pipe = NULL else 0
  */
-int exec_command(char **args, expr_t option, int *fd_pipe) {
+int exec_command(char **args, expr_t option, int *pipe) {
   int child = fork(); // create a child process
 
   if (!child) { // code to execute for the child process
     // redirection(option, fd);
-    manage_pipe_redirection(option, fd_pipe);
+    fprintf(stderr, "command %s, pid = %d\n", args[0], getpid());
+    manage_pipe_redirection(option, pipe);
     execvp(args[0], args);
     fprintf(stderr, "%s : command not found\n", args[0]);
     exit(EXIT_FAILURE); // if execvp fails exit failure
   }
-  if (fd_pipe != NULL) { // if pipe is included return 0 we don't wait for children
-    return 1;
+  if (pipe != NULL) { // if pipe is included return 0 we don't wait for children
+    return status = 0;
   }
   return child; // return the pid of the child
 }
 
-int execute_command(char **args, bool background) {
+
+/**
+ * @brief Execute a command (Can execute internal commands)
+ * 				Use exec_command and exec_internal_cmd to execute the given command
+ * 				Can execute the given command in background if background is set to true
+ * 				(meaning it's to the caller to manage the child zombies etc..)
+ * 
+ * 				Can also execute the command with redirection of to a pipe with the option given
+ * 				The redirection is done in the child process meaning that the redirection of the current process
+ * 				is not modified.
+ * 
+ * 				REDIRECTION_I => redirect STDIN_FILENO to pipe[0] (close pipe[1])
+ * 				REDIRECTION_O => redirect STDOUT_FILENO to pipe[1] (close pipe[0])
+ * 				PIPE => redirect STDOUT_FILENO and STDIN_FILENO
+ * 
+ * @param args Command and its arguments to execute
+ * @param background boolean: true will execute the command in background, false in the current process
+ * @param option To use only with pipe to redirect the the output or input to a pipe
+ * @param pipe Pipe to redirect to
+ * @return int return 0 if the command didn't failed or executed in background, else return the status error
+ * 				 of the command
+ */
+int execute_command(char **args, bool background, expr_t option, int *pipe) {
   intern_cmd typeof_cmd = is_internal_cmd(args[0]);
   if (typeof_cmd != NO_INTERN) { // if the command is an internal command
     return exec_internal_cmd(typeof_cmd, args, background);
   }
 
-  pid_t pid = exec_command(args, 0, NULL); // execute the command
+  pid_t pid = exec_command(args, option, pipe); // execute the command
 
   if (background) { // if background == true we don't wait for children
-    return 1;
+    return 0;
   }
   int status;                       // status exit of the child
   int w = waitpid(pid, &status, 0); // wait for the child
@@ -176,21 +250,15 @@ int execute_command(char **args, bool background) {
   return status; // return status of executing the command
 }
 
-/*
- * <summary>
- *		Every time this function is called it will call waitpid to wait
- *		any child process but no suspend the main process (OPTION
- *WNOHANG) If the call of waitpid with no hang doesnt return 0 then the process
- *changed state and then exited we then print that the process is finished
- *</summary>
+/**
+ * @brief Kill zombies that have been created when call it will wait for only child that terminated 
+ * 
  */
 void kill_zombies() {
-  int wstatus;
+  int wstatus = 0;
   int w = waitpid(-1, &wstatus, WNOHANG);
   // check(w < 0, "waitpid");
-  if (w >= 0) {
-    fprintf(stderr, "process %d\n", w);
-  }
+
   if (w > 0 && WIFSIGNALED(wstatus)) {
     fprintf(stderr, "process %d was signaled\n", w);
     fprintf(stderr, "%s\n", strsignal(WTERMSIG(wstatus)));
@@ -199,78 +267,108 @@ void kill_zombies() {
     fprintf(stderr, "process %d was stopped\n");
   }
 
-  if (WIFEXITED(wstatus)) {
+  if (w > 0 && WIFEXITED(wstatus)) {
     fprintf(stderr, "%d, Fini\n", w);
   }
 }
 
-/*
- * Parameters =>
- *	@int *pipefile : reference to the pipe that you want to close
- *
- * <summary>
- *		Will close both extremity of the pipe
- *		So make the pipe not usable anymore neither in writing or
- *reading
- * </summary>
+/**
+ * @brief Close both ends of a pipe passed in parameters
+ * 
+ * @param pipefile 
  */
-void close_pipe(int *pipefile) {
-  if (pipefile) {
-    close(pipefile[0]);
-    close(pipefile[1]);
+void close_pipe(int *fd_p) {
+  if (fd_p) {
+    close(fd_p[0]);
+    close(fd_p[1]);
   }
 }
 
+/**
+ * @brief Evaluate an expresion that should be executed in the background
+ * 				When called with true whenever it will call execute_command with background set to true
+ * 				
+ * 				If the expression is not command to execute we evaluate the left part normally
+ * 				and the right part in background until finding the command to execute 
+ * 				
+ * 
+ * @param e Expression to evaluate in the background
+ * @param background boolean to carry out the execution in background
+ * @return int  return 1 in case of error because of expression, else the status
+ */
 int evaluer_expr_bg(Expression *e, bool background) {
   if (e == NULL) {
     fprintf(stderr, "Expression passed in parameter is NULL\n");
     return 1;
   } else if (e->type == SIMPLE) {
-    return execute_command(e->arguments, true);
+    return execute_command(e->arguments, true, 0, NULL);
   }
 
   return evaluer_expr(e->gauche);
   return evaluer_expr_bg(e->droite, true);
 }
 
-int evaluer_redirection(Expression *e, bool background, expr_t option, int fd) {
+
+/**
+ * @brief Evaluate an expression that has a type REDIRECTION_X
+ * 				Will create the file needed and temporary redirect STDOUT_FILENO or STDERR_FILENO or STDIN_FILENO
+ * 				and execute the corresponding command
+ * 
+ * @param e Expression to evaluate
+ * @param background boolean set to true if the expression should be executed in a background
+ * @param option option to know which redirection to do on the fd
+ * 							 voir enum expr_t (REDIRECTION_I, REDIRECTION_O, REDIRECTION_EO, REDIRECTION_A ...)
+ * @param fd file descriptor to redirect to
+ * @param option_pipe when pipe is needed you can add option with a valid pipe (initialized before)
+ * 										REDIRECTION_I => redirect STDIN_FILENO to pipe[0] (close pipe[1])
+ * 										REDIRECTION_O => redirect STDOUT_FILENO to pipe[1] (close pipe[0])
+ * 										PIPE => redirect both STDOUT_FILENO and STDIN_FILENO
+ * @param fd_p NULL if you don't want to redirect to a pipe else a valid pipe already initialized with function pipe()
+ * @return int return 0 if success else error code
+ */
+int evaluer_redirection(Expression *e, bool background, expr_t option, int fd, expr_t option_pipe, int *fd_p) {
   if (e == NULL) {
     fprintf(stderr, "Expression passed in parameter is NULL\n");
     return 1;
   }
   if (e->type == SIMPLE) {
-    return execute_command(e->arguments, background);
+    return execute_command(e->arguments, background, option_pipe , fd_p);
   } else if (e->type == REDIRECTION_I) {
     int file = open(e->arguments[0], O_RDONLY);
     check(file >= 0, "open");
     int save_i = dup(0);
     dup2(file, 0);
-    int status = evaluer_redirection(e->gauche, background, e->type, file);
+    int status = evaluer_redirection(e->gauche, background, e->type, file, option_pipe, fd_p);
     dup2(save_i, 0);
+    close(save_i);
     return status;
   } else if (e->type == REDIRECTION_O) {
     int file = open(e->arguments[0], O_WRONLY + O_TRUNC + O_CREAT, 0666);
     check(file >= 0, "open:");
     int save_o = dup(1);
     dup2(file, 1);
-    int status = evaluer_redirection(e->gauche, background, e->type, file);
+    int status = evaluer_redirection(e->gauche, background, e->type, file, option_pipe, fd_p);
     dup2(save_o, 1);
+    close(save_o);
+		close(file);
     return status;
   } else if (e->type == REDIRECTION_A) {
     int file = open(e->arguments[0], O_WRONLY + O_APPEND + O_CREAT, 0666);
     check(file >= 0, "open");
     int save_o = dup(1);
     dup2(file, 1);
-    int status = evaluer_redirection(e->gauche, background, e->type, file);
+    int status = evaluer_redirection(e->gauche, background, e->type, file, option_pipe, fd_p);
     dup2(save_o, 1);
+    close(save_o);
     return status;
   } else if (e->type == REDIRECTION_E) {
     int file = open(e->arguments[0], O_WRONLY + O_CREAT, 0666);
     check(file >= 0, "open");
     int save_e = dup(2);
     dup2(file, 2);
-    int status = evaluer_redirection(e->gauche, background, e->type, file);
+    int status = evaluer_redirection(e->gauche, background, e->type, file, option_pipe, fd_p);
     dup2(save_e, 2);
+    close(save_e);
     return status;
   } else if (e->type == REDIRECTION_EO) {
     int file = open(e->arguments[0], O_WRONLY + O_CREAT, 0666);
@@ -279,14 +377,30 @@ int evaluer_redirection(Expression *e, bool background, expr_t option, int fd) {
     int save_o = dup(1);
     dup2(file, 1);
     dup2(file, 2);
-    int status = evaluer_redirection(e->gauche, background, e->type, file);
+    int status = evaluer_redirection(e->gauche, background, e->type, file, option_pipe, fd_p);
     dup2(save_e, 2);
     dup2(save_o, 1);
+    close(save_e);
+    close(save_o);
     return status;
   }
 }
 
-int evaluer_pipe(Expression *e, expr_t option, int *fp) {
+/**
+ * @brief Function to evaluate an expression of type PIPE
+ * 				Will redirect the standard output or input to the pipe
+ * 				given with the option paramater
+ * 
+ * @param e Expression pipe to evaluate
+ * @param option option for pipe redirection
+ * 							 REDIRECTION_I => redirect STDIN_FILENO to pipe[0] (close pipe[1])
+ * 							 REDIRECTION_O => redirect STDOUT_FILENO to pipe[1] (close pipe[0])
+ * 							 PIPE => redirect both STDOUT_FILENO and STDIN_FILENO
+ * 								
+ * @param fd_p Pipe to redirect to
+ * @return int return 0 if success
+ */
+int evaluer_pipe(Expression *e, expr_t option, int *fd_p) {
   if (e == NULL) {
     // to do
   }
@@ -295,20 +409,86 @@ int evaluer_pipe(Expression *e, expr_t option, int *fp) {
     return 1;
   }
   if (e->type == SIMPLE) {
-    return exec_command(e->arguments, option, fp);
+    return exec_command(e->arguments, option, fd_p);
   }
   if (e->type == PIPE) {
     int pipe_fd[2];
-    int p = pipe(pipe_fd);
-    check(p >= 0, "pipe");
-    int nb_children = evaluer_pipe(e->gauche, REDIRECTION_O, pipe_fd) + evaluer_pipe(e->droite, PIPE, pipe_fd);
-    dup2(pipe_fd[0], fp[1]);
-    close(fp[0]);
-
+    pipe(pipe_fd);
+    int nb_children = 1 + evaluer_pipe(e->gauche, REDIRECTION_O, pipe_fd);
+    pipe(fd_p);
+    close(pipe_fd[1]);
+    pipe_fd[1] = fd_p[1];
+    nb_children += evaluer_pipe(e->droite, PIPE, pipe_fd);
     return nb_children;
+  }
+  if (e->type >= REDIRECTION_I) {
+    if (option == REDIRECTION_O) {
+      int status;
+      int save_o = dup(1);
+      dup2(fd_p[1], 1);
+      status = evaluer_redirection(e, true, e->type, 0, 0, NULL);
+      dup2(save_o, 1);
+      close(save_o);
+      return 0;
+    }else if (option == REDIRECTION_I) {
+			int save_i = dup(0);
+			dup2(fd_p[0], 0);
+			evaluer_redirection(e, true, e->type, 0, option, fd_p);
+			dup2(save_i, 0);
+			close(save_i);
+			return 0;
+    }else if(option == PIPE){
+			int save_o = dup(1);
+			int save_i = dup(0);
+			dup2(fd_p[1], 1);
+			dup2(fd_p[0], 0);
+			evaluer_redirection(e, true, e->type, 0, option, fd_p);
+			dup2(save_i, 0);
+			dup2(save_o, 1);
+			return 0;
+		}
   }
 }
 
+/**
+ * @brief Check if you have multiple pipe for a current context in a tree
+ * 
+ * @param e Expression to look
+ * @return int return 1 if another pipe is find else 0
+ */
+int multiple_pipe(Expression *e) {
+  if (e->gauche->type == PIPE) {
+    return 1;
+  }
+  return 0;
+}
+
+/**
+ * @brief Wait for a given number of children, 
+ * 				For exemple if you created 3 zombies on purpose (with 2 pipes)
+ * 				At the end of the execution calling this function will kill the zombies
+ * 
+ * @param nb_children number of children to wait for 
+ * @return int return the last status return of the last children
+ */
+int wait_children_pipe(int nb_children){
+	int status;
+	for(int i = 0; i < nb_children; i++){
+		int w = waitpid(-1, &status, 0);
+		fprintf(stderr, "status %d, retrun wait = %d \n", status, w);
+
+	}
+	return status;
+}
+
+
+/**
+ * @brief Evaluate an expression of the tree, will look at the given type of the expression	
+ * 				and execute the different functions or commands.
+ * 
+ * @param e Expression to evaluate
+ * @return int return 0 on success else error code
+ */
 int evaluer_expr(Expression *e) {
   kill_zombies();
 
@@ -322,7 +502,7 @@ int evaluer_expr(Expression *e) {
   }
 
   if (e->type == SIMPLE) {
-    return execute_command(e->arguments, false);
+    return execute_command(e->arguments, false, 0, NULL);
   }
 
   else if (e->type == SEQUENCE) {
@@ -350,22 +530,23 @@ int evaluer_expr(Expression *e) {
   else if (e->type == BG) {
     return evaluer_expr_bg(e->gauche, true);
   } else if (e->type >= REDIRECTION_I) {
-    return evaluer_redirection(e, false, 0, 0);
+    return evaluer_redirection(e, false, 0, 0, 0, NULL);
   } else if (e->type == PIPE) {
-    int status;
-    int pipe_fd[2];
-    int p = pipe(pipe_fd);
-    check(p >= 0, "pipe");
-    int nb_children = evaluer_pipe(e->gauche, REDIRECTION_O, pipe_fd) +
-                      evaluer_pipe(e->droite, REDIRECTION_I, pipe_fd);
-    // int status = evaluer_pipe(e->droite,  REDIRECTION_I, pipe_fd);
-    close(pipe_fd[0]);
-    close(pipe_fd[1]);
+    int status = 0;
+    int fd_p[2];
+    int nb_children;
 
-    printf("nb of childrens =  %d\n", nb_children);
-    for(int i = 0; i < nb_children; i++){
-       waitpid(-1, &status, 0);
-   }
+    if (!multiple_pipe(e)) { // if you have only one pipe
+      int p = pipe(fd_p);
+    	check(p >= 0, "pipe");
+    }
+
+    nb_children = 1 + evaluer_pipe(e->gauche, REDIRECTION_O, fd_p);
+    nb_children += 1 + evaluer_pipe(e->droite, REDIRECTION_I, fd_p);
+    close_pipe(fd_p);
+
+    //printf("nb of childrens =  %d\n", nb_children); // debug
+    status = wait_children_pipe(nb_children);
     return status;
   }
 

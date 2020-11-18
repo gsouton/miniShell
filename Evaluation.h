@@ -6,7 +6,7 @@
 
 extern int evaluer_expr(Expression *e);
 
-
+int multiple_pipe(Expression *e);
 
 
 
