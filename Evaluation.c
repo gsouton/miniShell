@@ -14,16 +14,33 @@
 #define ECHO "echo"
 #define CD "cd"
 #define SOURCE "source"
+#define EXIT "exit"
 
-static void handler(int signum) {
-  /* Take appropriate actions for signal delivery */
-  printf("SIGTTIN detected\n");
+sigset_t allsig; //
+                           
+void sig_handler(int signum) {
+  int status = 0;
+  int w = 0;
+
+  switch(signum){
+    case (SIGCHLD):
+      do{
+        w = waitpid(0, &status, 0);
+        if(w > 0)
+          fprintf(stderr, "%d done\n", w);
+      }while(w > 0);
+      break;
+    default:
+      break;
+  }
+    
+
 }
 /**
  * @brief enum to know which type of internal command to execute
  *
  */
-typedef enum INTERN_CMD { NO_INTERN, _ECHO, _CD, _SOURCE } intern_cmd;
+typedef enum INTERN_CMD {NO_INTERN, _ECHO, _CD, _SOURCE, _EXIT } intern_cmd;
 
 /**
  * @brief Return 1 with a message that the functionality is not implemented
@@ -64,12 +81,15 @@ intern_cmd is_internal_cmd(char *cmd) {
   if (cmd == NULL) {
     fprintf(stderr, "Wrong paramter passed to is_internal_cmd; cmd == NULL\n");
     return -1;
-  } else if (!strcmp(ECHO, cmd)) {
+  }
+  else if (!strcmp(ECHO, cmd)) {
     return _ECHO;
   } else if (!strcmp(CD, cmd)) {
     return _CD;
   } else if (!strcmp(SOURCE, cmd)) {
     return _SOURCE;
+  }else if(!strcmp(EXIT, cmd)){
+    return _EXIT;
   }
   return NO_INTERN;
 }
@@ -86,10 +106,13 @@ int echo(char **arguments) {
   int i = 1;
   int w;
   while (arguments[i]) {
+    if(i > 1){
+      w = write(1, " ", sizeof(char));
+      check(w > 0, "write ");
+    }
     w = write(1, arguments[i], strlen(arguments[i]));
     check(w > 0, "write ");
-    w = write(1, " ", sizeof(char));
-    check(w > 0, "write ");
+    
 
     i++;
   }
@@ -98,6 +121,15 @@ int echo(char **arguments) {
 
   return 0;
 }
+
+int cd(char *path){
+  
+
+  int ch = chdir(path);
+  check(ch == 0, "change directory");
+  return ch;
+}
+
 
 /**
  * @brief Copy of the source command, execute the command given through a file
@@ -152,9 +184,11 @@ int exec_internal_cmd(intern_cmd typeof_cmd, char **arguments,
     return echo(arguments);
     // return not_implemented_yet();
   } else if (typeof_cmd == _CD) {
-    return not_implemented_yet();
+    return cd(arguments[1]);
   } else if (typeof_cmd == _SOURCE) {
     return source(arguments);
+  } else if (typeof_cmd == _EXIT){
+    exit(0);
   }
   return 1;
 }
@@ -266,7 +300,7 @@ int execute_command(char **args, bool background, expr_t option, int *pipe) {
  * child that terminated
  *
  */
-void kill_zombies() {
+void zombies_collector() {
   int wstatus = 0;
   int w = waitpid(-1, &wstatus, WNOHANG);
 
@@ -288,6 +322,20 @@ void kill_zombies() {
   }
 }
 
+void zombies_collector_sig(){
+  //Setting up signal handler
+  struct sigaction sa;
+  sa.sa_flags = SA_RESTART;
+  sigemptyset(&sa.sa_mask);
+  sa.sa_handler = sig_handler;
+  sigaction(SIGCHLD, &sa, NULL);
+  sigset_t allsig;
+  sigemptyset(&allsig); 
+  sigprocmask(SIG_BLOCK, &allsig, NULL); // block all signals
+
+}
+
+
 /**
  * @brief Close both ends of a pipe passed in parameters
  *
@@ -298,32 +346,6 @@ void close_pipe(int *fd_p) {
     close(fd_p[0]);
     close(fd_p[1]);
   }
-}
-
-/**
- * @brief Evaluate an expresion that should be executed in the background
- * 				When called with true whenever it will call
- * execute_command with background set to true
- *
- * 				If the expression is not command to execute we
- * evaluate the left part normally and the right part in background until
- * finding the command to execute
- *
- *
- * @param e Expression to evaluate in the background
- * @param background boolean to carry out the execution in background
- * @return int  return 1 in case of error because of expression, else the status
- */
-int evaluer_expr_bg(Expression *e, bool background) {
-  if (e == NULL) {
-    fprintf(stderr, "Expression passed in parameter is NULL\n");
-    return 1;
-  } else if (e->type == SIMPLE) {
-    return execute_command(e->arguments, true, 0, NULL);
-  }
-
-  return evaluer_expr(e->gauche);
-  return evaluer_expr_bg(e->droite, true);
 }
 
 /**
@@ -413,6 +435,42 @@ int evaluer_redirection(Expression *e, bool background, expr_t option, int fd,
     return status;
   }
 }
+
+/**
+ * @brief Evaluate an expresion that should be executed in the background
+ * 				When called with true whenever it will call
+ * execute_command with background set to true
+ *
+ * 				If the expression is not command to execute we
+ * evaluate the left part normally and the right part in background until
+ * finding the command to execute
+ *
+ *
+ * @param e Expression to evaluate in the background
+ * @param background boolean to carry out the execution in background
+ * @return int  return 1 in case of error because of expression, else the status
+ */
+int evaluer_expr_bg(Expression *e, bool background) {
+  if (e == NULL) {
+    fprintf(stderr, "Expression passed in parameter is NULL\n");
+    return 1;
+  } else if (e->type == SIMPLE) {
+    return execute_command(e->arguments, true, 0, NULL);
+  }
+  else if(e->type >= REDIRECTION_I){
+    int status = evaluer_redirection(e, true, e->type, 0, 0, NULL);
+    return status;
+  }
+  else if(e->type == BG){
+    int status = evaluer_expr_bg(e->gauche, true);
+    return status;
+  }
+
+  int status = evaluer_expr_bg(e->gauche, true);
+  return evaluer_expr_bg(e->droite, true);
+}
+
+
 
 /**
  * @brief Function to evaluate an expression of type PIPE
@@ -520,7 +578,8 @@ int wait_children_pipe(int nb_children) {
  * @return int return 0 on success else error code
  */
 int evaluer_expr(Expression *e) {
-  kill_zombies();
+  //zombies_collector();
+  zombies_collector_sig();
 
   if (e == NULL) {
     fprintf(stderr, "Expression passed in parameter is NULL\n");
@@ -558,7 +617,9 @@ int evaluer_expr(Expression *e) {
   }
 
   else if (e->type == BG) {
-    return evaluer_expr_bg(e->gauche, true);
+    int status = evaluer_expr_bg(e->gauche, true);
+    sigprocmask(SIG_UNBLOCK, &allsig, NULL);
+    return status;
   } else if (e->type >= REDIRECTION_I) {
     return evaluer_redirection(e, false, 0, 0, 0, NULL);
   } else if (e->type == PIPE) {
