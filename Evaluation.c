@@ -15,6 +15,8 @@
 #define CD "cd"
 #define SOURCE "source"
 #define EXIT "exit"
+#define TRUE "true"
+#define FALSE "false"
 
 sigset_t allsig; //
                            
@@ -40,7 +42,7 @@ void sig_handler(int signum) {
  * @brief enum to know which type of internal command to execute
  *
  */
-typedef enum INTERN_CMD {NO_INTERN, _ECHO, _CD, _SOURCE, _EXIT } intern_cmd;
+typedef enum INTERN_CMD {NO_INTERN, _ECHO, _CD, _SOURCE, _EXIT, _TRUE, _FALSE } intern_cmd;
 
 /**
  * @brief Return 1 with a message that the functionality is not implemented
@@ -82,6 +84,7 @@ intern_cmd is_internal_cmd(char *cmd) {
     fprintf(stderr, "Wrong paramter passed to is_internal_cmd; cmd == NULL\n");
     return -1;
   }
+
   else if (!strcmp(ECHO, cmd)) {
     return _ECHO;
   } else if (!strcmp(CD, cmd)) {
@@ -90,8 +93,21 @@ intern_cmd is_internal_cmd(char *cmd) {
     return _SOURCE;
   }else if(!strcmp(EXIT, cmd)){
     return _EXIT;
+  }else if(!strcmp(TRUE, cmd)){
+    return _TRUE;
+  }
+  else if(!strcmp(FALSE, cmd)){
+    return _FALSE;
   }
   return NO_INTERN;
+}
+
+int _true(){
+  return 0;
+}
+
+int _false(){
+  return 1;
 }
 
 /**
@@ -176,6 +192,7 @@ int exec_internal_cmd(intern_cmd typeof_cmd, char **arguments,
     if (background) {
       int pid = fork();
       if (!pid) {
+        //fprintf(stderr, "echo => %d", getpid());
         exit(echo(arguments)); // exit the program as a child because return is
                                // link to an adress
       }
@@ -189,6 +206,10 @@ int exec_internal_cmd(intern_cmd typeof_cmd, char **arguments,
     return source(arguments);
   } else if (typeof_cmd == _EXIT){
     exit(0);
+  }else if( typeof_cmd == _TRUE){
+    return _true();
+  }else if(typeof_cmd == _FALSE){
+    return _false();
   }
   return 1;
 }
@@ -243,7 +264,7 @@ void manage_pipe_redirection(expr_t option, int *pipe_fd) {
 int exec_command(char **args, expr_t option, int *pipe) {
   int child = fork(); // create a child process
   if (!child) {       // code to execute for the child process
-
+    //fprintf(stderr, "%s, => %d\n", args[0], getpid());
     manage_pipe_redirection(option, pipe);
     execvp(args[0], args);
     fprintf(stderr, "%s : command not found\n", args[0]);
@@ -322,16 +343,21 @@ void zombies_collector() {
   }
 }
 
-void zombies_collector_sig(){
+void zombies_collector_sig(struct sigaction sa, struct sigaction old){
   //Setting up signal handler
-  struct sigaction sa;
+  
   sa.sa_flags = SA_RESTART;
   sigemptyset(&sa.sa_mask);
   sa.sa_handler = sig_handler;
-  sigaction(SIGCHLD, &sa, NULL);
+  sigaction(SIGCHLD, &sa, &old);
   sigset_t allsig;
   sigemptyset(&allsig); 
   sigprocmask(SIG_BLOCK, &allsig, NULL); // block all signals
+
+}
+
+void reset_handler(struct sigaction old){
+    sigaction(SIGCHLD, &old, NULL);
 
 }
 
@@ -450,24 +476,30 @@ int evaluer_redirection(Expression *e, bool background, expr_t option, int fd,
  * @param background boolean to carry out the execution in background
  * @return int  return 1 in case of error because of expression, else the status
  */
-int evaluer_expr_bg(Expression *e, bool background) {
+int evaluer_expr_bg(Expression *e, bool background){
   if (e == NULL) {
     fprintf(stderr, "Expression passed in parameter is NULL\n");
     return 1;
   } else if (e->type == SIMPLE) {
-    return execute_command(e->arguments, true, 0, NULL);
+    return execute_command(e->arguments, background, 0, NULL);
   }
   else if(e->type >= REDIRECTION_I){
-    int status = evaluer_redirection(e, true, e->type, 0, 0, NULL);
+    int status = evaluer_redirection(e, background, e->type, 0, 0, NULL);
     return status;
   }
   else if(e->type == BG){
     int status = evaluer_expr_bg(e->gauche, true);
     return status;
+  }else if(e->type == PIPE){
+    return evaluer_expr(e);
+  }else if(e->type == SEQUENCE){
+    evaluer_expr_bg(e->gauche, false);
+    int status = evaluer_expr_bg(e->droite, true);
+    return status;
   }
-
-  int status = evaluer_expr_bg(e->gauche, true);
-  return evaluer_expr_bg(e->droite, true);
+  return not_implemented_yet();
+  /*int status = evaluer_expr_bg(e->gauche, true);
+  return evaluer_expr_bg(e->droite, true);*/
 }
 
 
@@ -497,7 +529,7 @@ int evaluer_pipe(Expression *e, expr_t option, int *fd_p) {
   if (e->type == SIMPLE) {
     // return exec_command(e->arguments, option, fd_p); // doesn't handle
     // internal commands
-    return execute_command(e->arguments, true, option,
+    int status = execute_command(e->arguments, true, option,
                            fd_p); // now can execute internal command with pipes
   }
   if (e->type == PIPE) {
@@ -510,7 +542,11 @@ int evaluer_pipe(Expression *e, expr_t option, int *fd_p) {
     nb_children += evaluer_pipe(e->droite, PIPE, pipe_fd);
     return nb_children;
   }
-  if (e->type >= REDIRECTION_I) {
+  else if(e->type == BG){
+    return evaluer_pipe(e->gauche, option, fd_p);
+  }
+  
+  else if (e->type >= REDIRECTION_I) {
     if (option == REDIRECTION_O) {
       int status;
       int save_o = dup(1);
@@ -579,7 +615,7 @@ int wait_children_pipe(int nb_children) {
  */
 int evaluer_expr(Expression *e) {
   //zombies_collector();
-  zombies_collector_sig();
+  //zombies_collector_sig();
 
   if (e == NULL) {
     fprintf(stderr, "Expression passed in parameter is NULL\n");
@@ -616,7 +652,9 @@ int evaluer_expr(Expression *e) {
     return status;
   }
 
-  else if (e->type == BG) {
+  else if (e->type == BG){
+    struct sigaction sa, old;
+    zombies_collector_sig(sa, old);
     int status = evaluer_expr_bg(e->gauche, true);
     sigprocmask(SIG_UNBLOCK, &allsig, NULL);
     return status;
@@ -635,7 +673,7 @@ int evaluer_expr(Expression *e) {
     nb_children = 1 + evaluer_pipe(e->gauche, REDIRECTION_O, fd_p);
     nb_children += 1 + evaluer_pipe(e->droite, REDIRECTION_I, fd_p);
     close_pipe(fd_p);
-
+    //sigprocmask(SIG_UNBLOCK, &allsig, NULL);
     // printf("nb of childrens =  %d\n", nb_children); // debug
     status = wait_children_pipe(nb_children);
     return status;
