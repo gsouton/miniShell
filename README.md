@@ -1,7 +1,7 @@
 # miniShell
 University project where we add to reproduce a shell (mini) in the context of System programming.
 
-
+![til](./gif/miniShell.gif)
 
 # Build
 To build the project make, yacc and lex are needed, 
