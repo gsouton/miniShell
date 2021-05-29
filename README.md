@@ -1,5 +1,7 @@
 # miniShell
 University project where we add to reproduce a shell (mini) in the context of System programming.
+So in this context the lexical analysis and tree building were given.
+I did not write the lex and yacc code.
 
 ![til](./gif/miniShell.gif)
 
