@@ -18,26 +18,36 @@
 #define TRUE "true"
 #define FALSE "false"
 
-sigset_t allsig; //
-                           
-void sig_handler(int signum) {
+sigset_t allsig; // Value sigset that represent all signals
+
+
+/**
+ * @brief Sig Handler to install
+ * 
+ * @param signum the signal to treat
+ */
+void sig_handler_zombies(int signum) {
   int status = 0;
   int w = 0;
 
   switch(signum){
     case (SIGCHLD):
       do{
-        w = waitpid(0, &status, 0);
+        w = waitpid(0, &status, WNOHANG);
         if(w > 0)
           fprintf(stderr, "%d done\n", w);
       }while(w > 0);
       break;
+    case(SIGTTIN):
+      fprintf(stderr, "SIGTTIN was catched \n");
     default:
       break;
   }
     
 
 }
+
+
 /**
  * @brief enum to know which type of internal command to execute
  *
@@ -138,6 +148,12 @@ int echo(char **arguments) {
   return 0;
 }
 
+/**
+ * @brief Reproduce the cd command call function chdir to change directory
+ * 
+ * @param path path where you want to go
+ * @return int return 0 on success else the return value of chdir
+ */
 int cd(char *path){
   
 
@@ -265,14 +281,15 @@ int exec_command(char **args, expr_t option, int *pipe) {
   int child = fork(); // create a child process
   if (!child) {       // code to execute for the child process
     //fprintf(stderr, "%s, => %d\n", args[0], getpid());
+    /*int i = setpgid(getpid(), getppid());
+    check(i == 0, "setpgid");*/
+    
     manage_pipe_redirection(option, pipe);
     execvp(args[0], args);
     fprintf(stderr, "%s : command not found\n", args[0]);
     exit(EXIT_FAILURE); // if execvp fails exit failure
   }
-  if (pipe != NULL) { // if pipe is included return 0 we don't wait for children
-    return status = 0;
-  }
+  
   return child; // return the pid of the child
 }
 
@@ -308,6 +325,8 @@ int execute_command(char **args, bool background, expr_t option, int *pipe) {
   pid_t pid = exec_command(args, option, pipe); // execute the command
 
   if (background) { // if background == true we don't wait for children
+    if(!pipe)
+      fprintf(stderr, "\n%d\n", getpid());
     return 0;
   }
   int status;                       // status exit of the child
@@ -343,12 +362,19 @@ void zombies_collector() {
   }
 }
 
-void zombies_collector_sig(struct sigaction sa, struct sigaction old){
+/**
+ * @brief Install a handler to catch SIGCHLD and get rid of zombies
+ * 
+ * @param sa struct sigaction
+ * @param old save of the old table of the signal behavior
+ * @param f function handler for catching signal
+ */
+void zombies_collector_sig(struct sigaction sa, struct sigaction old, void (*f)(int)){
   //Setting up signal handler
   
   sa.sa_flags = SA_RESTART;
   sigemptyset(&sa.sa_mask);
-  sa.sa_handler = sig_handler;
+  sa.sa_handler = f;
   sigaction(SIGCHLD, &sa, &old);
   sigset_t allsig;
   sigemptyset(&allsig); 
@@ -356,6 +382,11 @@ void zombies_collector_sig(struct sigaction sa, struct sigaction old){
 
 }
 
+/**
+ * @brief Will set back the behavior of SIGCHLD
+ * 
+ * @param old Struct sigaction of the saved signal structure
+ */
 void reset_handler(struct sigaction old){
     sigaction(SIGCHLD, &old, NULL);
 
@@ -600,7 +631,7 @@ int multiple_pipe(Expression *e) {
 int wait_children_pipe(int nb_children) {
   int status;
   for (int i = 0; i < nb_children; i++) {
-    int w = waitpid(-1, &status, 0);
+    int w = waitpid(0, &status, 0);
     // fprintf(stderr, "status %d, retrun wait = %d \n", status, w);
   }
   return status;
@@ -614,6 +645,8 @@ int wait_children_pipe(int nb_children) {
  * @return int return 0 on success else error code
  */
 int evaluer_expr(Expression *e) {
+  struct sigaction sa, old;
+  zombies_collector_sig(sa, old, sig_handler_zombies); // install handler and also block all signals
   //zombies_collector();
   //zombies_collector_sig();
 
@@ -623,11 +656,15 @@ int evaluer_expr(Expression *e) {
   }
 
   if (e->type == VIDE) {
+    sigprocmask(SIG_UNBLOCK, &allsig, NULL); // unblock all signals after finishing execution
     return 0;
   }
 
-  if (e->type == SIMPLE) {
-    return execute_command(e->arguments, false, 0, NULL);
+  if (e->type == SIMPLE){
+    int status = execute_command(e->arguments, false, 0, NULL);
+    sigprocmask(SIG_UNBLOCK, &allsig, NULL); // unblock all signals after finishing execution
+    return status;
+
   }
 
   else if (e->type == SEQUENCE) {
@@ -653,14 +690,13 @@ int evaluer_expr(Expression *e) {
   }
 
   else if (e->type == BG){
-    struct sigaction sa, old;
-    zombies_collector_sig(sa, old);
     int status = evaluer_expr_bg(e->gauche, true);
-    sigprocmask(SIG_UNBLOCK, &allsig, NULL);
+    sigprocmask(SIG_UNBLOCK, &allsig, NULL); // unblock all signals after finishing execution
     return status;
-  } else if (e->type >= REDIRECTION_I) {
+  } else if (e->type >= REDIRECTION_I){
     return evaluer_redirection(e, false, 0, 0, 0, NULL);
   } else if (e->type == PIPE) {
+    
     int status = 0;
     int fd_p[2];
     int nb_children;
@@ -670,12 +706,12 @@ int evaluer_expr(Expression *e) {
       check(p >= 0, "pipe");
     }
 
-    nb_children = 1 + evaluer_pipe(e->gauche, REDIRECTION_O, fd_p);
-    nb_children += 1 + evaluer_pipe(e->droite, REDIRECTION_I, fd_p);
+    nb_children = 1+evaluer_pipe(e->gauche, REDIRECTION_O, fd_p);
+    nb_children = 1+evaluer_pipe(e->droite, REDIRECTION_I, fd_p);
     close_pipe(fd_p);
-    //sigprocmask(SIG_UNBLOCK, &allsig, NULL);
-    // printf("nb of childrens =  %d\n", nb_children); // debug
     status = wait_children_pipe(nb_children);
+    sigprocmask(SIG_UNBLOCK, &allsig, NULL); // unblock all signals after finishing execution
+
     return status;
   }
 
